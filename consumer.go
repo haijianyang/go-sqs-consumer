@@ -1,6 +1,7 @@
 package consumer
 
 import (
+	"context"
 	"errors"
 	"log"
 	"sync"
@@ -10,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/sqs"
 )
 
-type Handler func(message *sqs.Message) error
+type Handler func(context context.Context, message *sqs.Message) error
 
 type Worker struct {
 	Config *Config
@@ -146,7 +147,7 @@ func (this *Worker) On(event string, callback interface{}) {
 	this.Events[event] = callback
 }
 
-func (this *Worker) Start(handler Handler) {
+func (this *Worker) Start(context context.Context, handler Handler) {
 	for idle := int64(0); ; {
 		if aws.Int64Value(this.Config.Idle) > 0 && idle > aws.Int64Value(this.Config.Idle) && aws.Int64Value(this.Config.Sleep) > 0 {
 			idle = 0
@@ -174,20 +175,20 @@ func (this *Worker) Start(handler Handler) {
 				this.Events[EventReceiveMessage].(OnReceiveMessage)(output.Messages)
 			}
 
-			this.run(handler, output.Messages)
+			this.run(context, handler, output.Messages)
 		} else {
 			idle++
 		}
 	}
 }
 
-func (this *Worker) Concurrent(handler Handler, concurrency int) {
+func (this *Worker) Concurrent(context context.Context, handler Handler, concurrency int) {
 	for i := 0; i < concurrency; i++ {
-		go this.Start(handler)
+		go this.Start(context, handler)
 	}
 }
 
-func (this *Worker) run(handler Handler, messages []*sqs.Message) {
+func (this *Worker) run(context context.Context, handler Handler, messages []*sqs.Message) {
 	var wg sync.WaitGroup
 	wg.Add(len(messages))
 
@@ -195,7 +196,7 @@ func (this *Worker) run(handler Handler, messages []*sqs.Message) {
 		go func(message *sqs.Message) {
 			defer wg.Done()
 
-			if err := this.handleMessage(message, handler); err != nil {
+			if err := this.handleMessage(context, message, handler); err != nil {
 				log.Printf("[SQS] handleMessage error: %v", err)
 			} else {
 				if this.Events[EventProcessMessage] != nil {
@@ -208,8 +209,8 @@ func (this *Worker) run(handler Handler, messages []*sqs.Message) {
 	wg.Wait()
 }
 
-func (this *Worker) handleMessage(message *sqs.Message, handler Handler) error {
-	if err := handler(message); err != nil {
+func (this *Worker) handleMessage(context context.Context, message *sqs.Message, handler Handler) error {
+	if err := handler(context, message); err != nil {
 		return err
 	}
 
